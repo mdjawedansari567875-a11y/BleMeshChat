@@ -1,1 +1,4 @@
-
+<resources>
+    <color name="brand_primary">#FF5722</color>
+    <color name="ic_launcher_background">#FF5722</color>
+</resources>
