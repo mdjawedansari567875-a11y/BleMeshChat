@@ -9,7 +9,7 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:padding="12dp"
-        android:background="#1E1E1E"
+        android:background="@color/brand_primary"
         android:textColor="#FFFFFF"
         android:text="Peers connected: 0" />
 
