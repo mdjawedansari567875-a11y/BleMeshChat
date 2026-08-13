@@ -18,24 +18,9 @@
 
     <uses-feature android:name="android.hardware.bluetooth_le" android:required="true" />
 
-    <application
+<application
         android:allowBackup="true"
-        android:label="BLE Mesh Chat"
+        android:icon="@mipmap/ic_launcher"
+        android:roundIcon="@mipmap/ic_launcher_round"
+        android:label="@string/app_name"
         android:theme="@style/Theme.Material3.DayNight">
-
-        <activity
-            android:name=".MainActivity"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.MAIN" />
-                <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity>
-
-        <service
-            android:name=".BleMeshService"
-            android:foregroundServiceType="connectedDevice"
-            android:exported="false" />
-
-    </application>
-</manifest>
