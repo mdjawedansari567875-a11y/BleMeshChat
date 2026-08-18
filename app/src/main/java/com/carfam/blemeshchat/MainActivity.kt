@@ -28,6 +28,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var adapter: MessageAdapter
     private lateinit var statusText: TextView
     private lateinit var messageInput: EditText
+    private lateinit var recyclerView: RecyclerView
 
     data class UiMessage(
         val id: String,
@@ -77,6 +78,7 @@ class MainActivity : AppCompatActivity() {
                         MeshMessage.TYPE_MSG -> {
                             messages.add(UiMessage(id, sender, text, ts, isMe))
                             adapter.notifyItemInserted(messages.size - 1)
+                            recyclerView.scrollToPosition(messages.size - 1)
                         }
                         MeshMessage.TYPE_EDIT -> {
                             val idx = messages.indexOfFirst { it.id == targetId }
@@ -110,7 +112,7 @@ class MainActivity : AppCompatActivity() {
         statusText = findViewById(R.id.statusText)
         messageInput = findViewById(R.id.messageInput)
         val sendButton: Button = findViewById(R.id.sendButton)
-        val recyclerView: RecyclerView = findViewById(R.id.messageList)
+        recyclerView = findViewById(R.id.messageList)
 
         adapter = MessageAdapter(
             items = messages,
@@ -139,8 +141,7 @@ class MainActivity : AppCompatActivity() {
         AlertDialog.Builder(this)
             .setTitle("Message options")
             .setItems(options) { _, which ->
-                val chosen = options[which]
-                when (chosen) {
+                when (options[which]) {
                     "Edit" -> showEditDialog(msg)
                     "Delete for me" -> deleteForMe(msg)
                     "Delete for everyone" -> deleteForEveryone(msg)
@@ -174,13 +175,10 @@ class MainActivity : AppCompatActivity() {
             messages.removeAt(idx)
             adapter.notifyItemRemoved(idx)
         }
-        // Not sent over the mesh - only removed from this device's own view.
     }
 
     private fun deleteForEveryone(msg: UiMessage) {
         service?.sendDeleteForEveryone(msg.id)
-        // The removal from this device's own list happens when the DELETE
-        // event broadcasts back to the UI, same as it does on every peer.
     }
 
     private fun requestNeededPermissions() {
@@ -251,7 +249,7 @@ class MainActivity : AppCompatActivity() {
             val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.timestamp))
             holder.sender?.text = item.sender
             holder.body.text = item.text
-            holder.time.text = if (item.edited) "$time · edited" else time
+            holder.time.text = if (item.edited) "$time . edited" else time
 
             holder.itemView.setOnLongClickListener {
                 onLongPress(item)
