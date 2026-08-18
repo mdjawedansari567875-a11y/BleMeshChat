@@ -29,9 +29,12 @@ class BleMeshService : Service() {
         val CHAR_UUID: UUID = UUID.fromString("6e400002-b5a3-f393-e0a9-e50e24dcca9e")
         val CCCD_UUID: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
 
-        const val ACTION_MESSAGE_RECEIVED = "com.carfam.blemeshchat.MESSAGE_RECEIVED"
+        const val ACTION_MESSAGE_EVENT = "com.carfam.blemeshchat.MESSAGE_EVENT"
         const val ACTION_PEER_COUNT_CHANGED = "com.carfam.blemeshchat.PEER_COUNT_CHANGED"
+        const val EXTRA_TYPE = "type"
+        const val EXTRA_ID = "id"
         const val EXTRA_SENDER = "sender"
+        const val EXTRA_TARGET_ID = "target_id"
         const val EXTRA_TEXT = "text"
         const val EXTRA_TIMESTAMP = "timestamp"
         const val EXTRA_PEER_COUNT = "peer_count"
@@ -86,9 +89,7 @@ class BleMeshService : Service() {
             return
         }
         isRunning = true
-
         startForeground(1, buildForegroundNotification())
-
         setupGattServer()
         startAdvertising()
         startScanning()
@@ -108,7 +109,21 @@ class BleMeshService : Service() {
     }
 
     fun sendMessage(text: String) {
-        val msg = MeshMessage.create(localId, text)
+        val msg = MeshMessage.createMessage(localId, text)
+        seenIds.add(msg.id)
+        broadcastToUi(msg)
+        relay(msg, excludeAddress = null)
+    }
+
+    fun sendEdit(targetId: String, newText: String) {
+        val msg = MeshMessage.createEdit(localId, targetId, newText)
+        seenIds.add(msg.id)
+        broadcastToUi(msg)
+        relay(msg, excludeAddress = null)
+    }
+
+    fun sendDeleteForEveryone(targetId: String) {
+        val msg = MeshMessage.createDelete(localId, targetId)
         seenIds.add(msg.id)
         broadcastToUi(msg)
         relay(msg, excludeAddress = null)
@@ -146,18 +161,11 @@ class BleMeshService : Service() {
 
         @SuppressLint("MissingPermission")
         override fun onCharacteristicWriteRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            characteristic: BluetoothGattCharacteristic,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray
+            device: BluetoothDevice, requestId: Int, characteristic: BluetoothGattCharacteristic,
+            preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
         ) {
             if (characteristic.uuid == CHAR_UUID) {
-                MeshMessage.fromWire(value)?.let { msg ->
-                    handleIncoming(msg, fromAddress = device.address)
-                }
+                MeshMessage.fromWire(value)?.let { msg -> handleIncoming(msg, fromAddress = device.address) }
             }
             if (responseNeeded) {
                 gattServer?.sendResponse(device, requestId, BluetoothGatt.GATT_SUCCESS, offset, null)
@@ -166,13 +174,8 @@ class BleMeshService : Service() {
 
         @SuppressLint("MissingPermission")
         override fun onDescriptorWriteRequest(
-            device: BluetoothDevice,
-            requestId: Int,
-            descriptor: BluetoothGattDescriptor,
-            preparedWrite: Boolean,
-            responseNeeded: Boolean,
-            offset: Int,
-            value: ByteArray
+            device: BluetoothDevice, requestId: Int, descriptor: BluetoothGattDescriptor,
+            preparedWrite: Boolean, responseNeeded: Boolean, offset: Int, value: ByteArray
         ) {
             if (descriptor.uuid == CCCD_UUID) {
                 if (value.contentEquals(BluetoothGattDescriptor.ENABLE_NOTIFICATION_VALUE)) {
@@ -204,20 +207,14 @@ class BleMeshService : Service() {
     }
 
     private val advertiseCallback = object : AdvertiseCallback() {
-        override fun onStartFailure(errorCode: Int) {
-            Log.e(TAG, "Advertise failed: $errorCode")
-        }
+        override fun onStartFailure(errorCode: Int) { Log.e(TAG, "Advertise failed: $errorCode") }
     }
 
     @SuppressLint("MissingPermission")
     private fun startScanning() {
         scanner = bluetoothAdapter?.bluetoothLeScanner
-        val filter = ScanFilter.Builder()
-            .setServiceUuid(ParcelUuid(SERVICE_UUID))
-            .build()
-        val settings = ScanSettings.Builder()
-            .setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY)
-            .build()
+        val filter = ScanFilter.Builder().setServiceUuid(ParcelUuid(SERVICE_UUID)).build()
+        val settings = ScanSettings.Builder().setScanMode(ScanSettings.SCAN_MODE_LOW_LATENCY).build()
         scanner?.startScan(listOf(filter), settings, scanCallback)
     }
 
@@ -228,19 +225,14 @@ class BleMeshService : Service() {
             if (outgoingGatts.containsKey(device.address)) return
             device.connectGatt(this@BleMeshService, false, gattClientCallback)
         }
-
-        override fun onScanFailed(errorCode: Int) {
-            Log.e(TAG, "Scan failed: $errorCode")
-        }
+        override fun onScanFailed(errorCode: Int) { Log.e(TAG, "Scan failed: $errorCode") }
     }
 
     private val gattClientCallback = object : BluetoothGattCallback() {
         @SuppressLint("MissingPermission")
         override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
             when (newState) {
-                BluetoothProfile.STATE_CONNECTED -> {
-                    gatt.requestMtu(517)
-                }
+                BluetoothProfile.STATE_CONNECTED -> gatt.requestMtu(517)
                 BluetoothProfile.STATE_DISCONNECTED -> {
                     outgoingGatts.remove(gatt.device.address)
                     gatt.close()
@@ -287,15 +279,13 @@ class BleMeshService : Service() {
         }
         broadcastToUi(msg)
         if (msg.ttl > 0) {
-            val relayed = msg.copy(ttl = msg.ttl - 1)
-            relay(relayed, excludeAddress = fromAddress)
+            relay(msg.copy(ttl = msg.ttl - 1), excludeAddress = fromAddress)
         }
     }
 
     @SuppressLint("MissingPermission")
     private fun relay(msg: MeshMessage, excludeAddress: String?) {
         val wire = msg.toWire()
-
         val char = messageCharacteristic
         if (char != null) {
             for (device in subscribedCentrals) {
@@ -304,7 +294,6 @@ class BleMeshService : Service() {
                 gattServer?.notifyCharacteristicChanged(device, char, false)
             }
         }
-
         for ((address, gatt) in outgoingGatts) {
             if (address == excludeAddress) continue
             val service = gatt.getService(SERVICE_UUID) ?: continue
@@ -315,27 +304,32 @@ class BleMeshService : Service() {
     }
 
     private fun broadcastToUi(msg: MeshMessage) {
-        val intent = Intent(ACTION_MESSAGE_RECEIVED).apply {
+        val intent = Intent(ACTION_MESSAGE_EVENT).apply {
+            putExtra(EXTRA_TYPE, msg.type)
+            putExtra(EXTRA_ID, msg.id)
             putExtra(EXTRA_SENDER, msg.senderId)
+            putExtra(EXTRA_TARGET_ID, msg.targetId)
             putExtra(EXTRA_TEXT, msg.text)
             putExtra(EXTRA_TIMESTAMP, msg.timestamp)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
+    // Counts distinct physical devices, not distinct connections (a peer might
+    // be connected to us both as central and peripheral at once).
     private fun notifyPeerCountChanged() {
-        val count = subscribedCentrals.size + outgoingGatts.size
+        val addresses = HashSet<String>()
+        subscribedCentrals.forEach { addresses.add(it.address) }
+        addresses.addAll(outgoingGatts.keys)
         val intent = Intent(ACTION_PEER_COUNT_CHANGED).apply {
-            putExtra(EXTRA_PEER_COUNT, count)
+            putExtra(EXTRA_PEER_COUNT, addresses.size)
         }
         LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                NOTIF_CHANNEL_ID, "Mesh Chat", NotificationManager.IMPORTANCE_LOW
-            )
+            val channel = NotificationChannel(NOTIF_CHANNEL_ID, "Mesh Chat", NotificationManager.IMPORTANCE_LOW)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(channel)
         }
