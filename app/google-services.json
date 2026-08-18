@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "85721943621",
+    "project_id": "carfammeshchat",
+    "storage_bucket": "carfammeshchat.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:85721943621:android:dd5805b5ed22171b3edd2c",
+        "android_client_info": {
+          "package_name": "com.carfam.blemeshchat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWTAToHkX9eZebYj0G6mGCU3BF-xZaGsk"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
