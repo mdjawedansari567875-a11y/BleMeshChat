@@ -1,10 +1,12 @@
 package com.carfam.blemeshchat
 
+import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.content.*
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
+import android.text.InputType
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -27,7 +29,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var statusText: TextView
     private lateinit var messageInput: EditText
 
-    data class UiMessage(val sender: String, val text: String, val timestamp: Long, val isMe: Boolean)
+    data class UiMessage(
+        val id: String,
+        val sender: String,
+        var text: String,
+        val timestamp: Long,
+        val isMe: Boolean,
+        var edited: Boolean = false
+    )
 
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -35,7 +44,7 @@ class MainActivity : AppCompatActivity() {
         if (results.values.all { it }) {
             bindAndStartService()
         } else {
-            Toast.makeText(this, "Bluetooth permissions zaroori hain mesh chat ke liye", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Bluetooth permissions are required for mesh chat", Toast.LENGTH_LONG).show()
         }
     }
 
@@ -44,9 +53,8 @@ class MainActivity : AppCompatActivity() {
             service = (binder as BleMeshService.LocalBinder).getService()
             bound = true
             service?.startMeshing()
-            statusText.text = "You are: ${service?.getLocalId()} | Peers: 0"
+            statusText.text = "You: ${service?.getLocalId()} | Peers: 0"
         }
-
         override fun onServiceDisconnected(name: ComponentName) {
             bound = false
             service = null
@@ -56,17 +64,40 @@ class MainActivity : AppCompatActivity() {
     private val receiver = object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
             when (intent.action) {
-                BleMeshService.ACTION_MESSAGE_RECEIVED -> {
+                BleMeshService.ACTION_MESSAGE_EVENT -> {
+                    val type = intent.getStringExtra(BleMeshService.EXTRA_TYPE) ?: return
+                    val id = intent.getStringExtra(BleMeshService.EXTRA_ID) ?: return
                     val sender = intent.getStringExtra(BleMeshService.EXTRA_SENDER) ?: return
-                    val text = intent.getStringExtra(BleMeshService.EXTRA_TEXT) ?: return
+                    val targetId = intent.getStringExtra(BleMeshService.EXTRA_TARGET_ID) ?: ""
+                    val text = intent.getStringExtra(BleMeshService.EXTRA_TEXT) ?: ""
                     val ts = intent.getLongExtra(BleMeshService.EXTRA_TIMESTAMP, System.currentTimeMillis())
                     val isMe = sender == service?.getLocalId()
-                    messages.add(UiMessage(sender, text, ts, isMe))
-                    adapter.notifyItemInserted(messages.size - 1)
+
+                    when (type) {
+                        MeshMessage.TYPE_MSG -> {
+                            messages.add(UiMessage(id, sender, text, ts, isMe))
+                            adapter.notifyItemInserted(messages.size - 1)
+                        }
+                        MeshMessage.TYPE_EDIT -> {
+                            val idx = messages.indexOfFirst { it.id == targetId }
+                            if (idx >= 0) {
+                                messages[idx].text = text
+                                messages[idx].edited = true
+                                adapter.notifyItemChanged(idx)
+                            }
+                        }
+                        MeshMessage.TYPE_DELETE -> {
+                            val idx = messages.indexOfFirst { it.id == targetId }
+                            if (idx >= 0) {
+                                messages.removeAt(idx)
+                                adapter.notifyItemRemoved(idx)
+                            }
+                        }
+                    }
                 }
                 BleMeshService.ACTION_PEER_COUNT_CHANGED -> {
                     val count = intent.getIntExtra(BleMeshService.EXTRA_PEER_COUNT, 0)
-                    statusText.text = "You are: ${service?.getLocalId()} | Peers: $count"
+                    statusText.text = "You: ${service?.getLocalId()} | Peers: $count"
                 }
             }
         }
@@ -81,7 +112,10 @@ class MainActivity : AppCompatActivity() {
         val sendButton: Button = findViewById(R.id.sendButton)
         val recyclerView: RecyclerView = findViewById(R.id.messageList)
 
-        adapter = MessageAdapter(messages)
+        adapter = MessageAdapter(
+            items = messages,
+            onLongPress = { msg -> showMessageOptions(msg) }
+        )
         recyclerView.layoutManager = LinearLayoutManager(this)
         recyclerView.adapter = adapter
 
@@ -94,6 +128,59 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestNeededPermissions()
+    }
+
+    private fun showMessageOptions(msg: UiMessage) {
+        val options = if (msg.isMe) {
+            arrayOf("Edit", "Delete for me", "Delete for everyone")
+        } else {
+            arrayOf("Delete for me")
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Message options")
+            .setItems(options) { _, which ->
+                val chosen = options[which]
+                when (chosen) {
+                    "Edit" -> showEditDialog(msg)
+                    "Delete for me" -> deleteForMe(msg)
+                    "Delete for everyone" -> deleteForEveryone(msg)
+                }
+            }
+            .show()
+    }
+
+    private fun showEditDialog(msg: UiMessage) {
+        val input = EditText(this)
+        input.inputType = InputType.TYPE_CLASS_TEXT
+        input.setText(msg.text)
+        input.setSelection(input.text.length)
+
+        AlertDialog.Builder(this)
+            .setTitle("Edit message")
+            .setView(input)
+            .setPositiveButton("Save") { _, _ ->
+                val newText = input.text.toString().trim()
+                if (newText.isNotEmpty() && newText != msg.text) {
+                    service?.sendEdit(msg.id, newText)
+                }
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
+    }
+
+    private fun deleteForMe(msg: UiMessage) {
+        val idx = messages.indexOfFirst { it.id == msg.id }
+        if (idx >= 0) {
+            messages.removeAt(idx)
+            adapter.notifyItemRemoved(idx)
+        }
+        // Not sent over the mesh - only removed from this device's own view.
+    }
+
+    private fun deleteForEveryone(msg: UiMessage) {
+        service?.sendDeleteForEveryone(msg.id)
+        // The removal from this device's own list happens when the DELETE
+        // event broadcasts back to the UI, same as it does on every peer.
     }
 
     private fun requestNeededPermissions() {
@@ -111,7 +198,7 @@ class MainActivity : AppCompatActivity() {
     private fun bindAndStartService() {
         val adapter = BluetoothAdapter.getDefaultAdapter()
         if (adapter == null || !adapter.isEnabled) {
-            Toast.makeText(this, "Kripya pehle Bluetooth ON karein", Toast.LENGTH_LONG).show()
+            Toast.makeText(this, "Please turn on Bluetooth first", Toast.LENGTH_LONG).show()
             return
         }
         val intent = Intent(this, BleMeshService::class.java)
@@ -119,7 +206,7 @@ class MainActivity : AppCompatActivity() {
         bindService(intent, serviceConnection, Context.BIND_AUTO_CREATE)
 
         val filter = IntentFilter().apply {
-            addAction(BleMeshService.ACTION_MESSAGE_RECEIVED)
+            addAction(BleMeshService.ACTION_MESSAGE_EVENT)
             addAction(BleMeshService.ACTION_PEER_COUNT_CHANGED)
         }
         LocalBroadcastManager.getInstance(this).registerReceiver(receiver, filter)
@@ -134,25 +221,42 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
     }
 
-    class MessageAdapter(private val items: List<UiMessage>) :
-        RecyclerView.Adapter<MessageAdapter.VH>() {
+    class MessageAdapter(
+        private val items: List<UiMessage>,
+        private val onLongPress: (UiMessage) -> Unit
+    ) : RecyclerView.Adapter<MessageAdapter.VH>() {
 
-        class VH(view: View) : RecyclerView.ViewHolder(view) {
-            val sender: TextView = view.findViewById(R.id.senderText)
-            val body: TextView = view.findViewById(R.id.bodyText)
+        companion object {
+            private const val TYPE_SENT = 0
+            private const val TYPE_RECEIVED = 1
         }
 
+        class VH(view: View) : RecyclerView.ViewHolder(view) {
+            val sender: TextView? = view.findViewById(R.id.senderText)
+            val body: TextView = view.findViewById(R.id.bodyText)
+            val time: TextView = view.findViewById(R.id.timeText)
+        }
+
+        override fun getItemViewType(position: Int): Int =
+            if (items[position].isMe) TYPE_SENT else TYPE_RECEIVED
+
         override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): VH {
-            val view = LayoutInflater.from(parent.context)
-                .inflate(R.layout.item_message, parent, false)
+            val layout = if (viewType == TYPE_SENT) R.layout.item_message_sent else R.layout.item_message_received
+            val view = LayoutInflater.from(parent.context).inflate(layout, parent, false)
             return VH(view)
         }
 
         override fun onBindViewHolder(holder: VH, position: Int) {
             val item = items[position]
-            val time = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date(item.timestamp))
-            holder.sender.text = if (item.isMe) "You · $time" else "${item.sender} · $time"
+            val time = SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(item.timestamp))
+            holder.sender?.text = item.sender
             holder.body.text = item.text
+            holder.time.text = if (item.edited) "$time · edited" else time
+
+            holder.itemView.setOnLongClickListener {
+                onLongPress(item)
+                true
+            }
         }
 
         override fun getItemCount() = items.size
