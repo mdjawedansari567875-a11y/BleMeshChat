@@ -3,10 +3,12 @@ package com.carfam.blemeshchat
 import android.app.AlertDialog
 import android.bluetooth.BluetoothAdapter
 import android.content.*
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
 import android.text.InputType
+import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
@@ -16,6 +18,9 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
+import com.google.firebase.messaging.FirebaseMessaging
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -30,6 +35,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var messageInput: EditText
     private lateinit var recyclerView: RecyclerView
 
+    private var announcementDialog: AlertDialog? = null
+
     data class UiMessage(
         val id: String,
         val sender: String,
@@ -42,7 +49,8 @@ class MainActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.all { it }) {
+        if (results.entries.filter { it.key != android.Manifest.permission.POST_NOTIFICATIONS }
+                .all { it.value }) {
             bindAndStartService()
         } else {
             Toast.makeText(this, "Bluetooth permissions are required for mesh chat", Toast.LENGTH_LONG).show()
@@ -130,7 +138,55 @@ class MainActivity : AppCompatActivity() {
         }
 
         requestNeededPermissions()
+        setupAnnouncementListener()
+        subscribeToAnnouncementsTopic()
     }
+
+    // ---------------------------------------------------------------
+    // Remote announcement (controlled from the Firebase console)
+    // ---------------------------------------------------------------
+
+    private fun setupAnnouncementListener() {
+        Firebase.firestore.collection("announcements").document("current")
+            .addSnapshotListener { snapshot, error ->
+                if (error != null || snapshot == null || !snapshot.exists()) return@addSnapshotListener
+                val active = snapshot.getBoolean("active") ?: false
+                val description = snapshot.getString("description") ?: ""
+                val link = snapshot.getString("link") ?: ""
+
+                if (active) {
+                    showAnnouncementDialog(description, link)
+                } else {
+                    announcementDialog?.dismiss()
+                    announcementDialog = null
+                }
+            }
+    }
+
+    private fun showAnnouncementDialog(description: String, link: String) {
+        announcementDialog?.dismiss()
+        val dialog = AlertDialog.Builder(this)
+            .setTitle("Update Available")
+            .setMessage(description)
+            .setCancelable(false)
+            .setPositiveButton("Download") { _, _ ->
+                if (link.isNotEmpty()) {
+                    startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(link)))
+                }
+            }
+            .create()
+        dialog.setOnKeyListener { _, keyCode, _ -> keyCode == KeyEvent.KEYCODE_BACK }
+        dialog.show()
+        announcementDialog = dialog
+    }
+
+    private fun subscribeToAnnouncementsTopic() {
+        FirebaseMessaging.getInstance().subscribeToTopic("all_users")
+    }
+
+    // ---------------------------------------------------------------
+    // Message long-press menu
+    // ---------------------------------------------------------------
 
     private fun showMessageOptions(msg: UiMessage) {
         val options = if (msg.isMe) {
@@ -189,6 +245,9 @@ class MainActivity : AppCompatActivity() {
             perms.add(android.Manifest.permission.BLUETOOTH_CONNECT)
         } else {
             perms.add(android.Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            perms.add(android.Manifest.permission.POST_NOTIFICATIONS)
         }
         permissionLauncher.launch(perms.toTypedArray())
     }
