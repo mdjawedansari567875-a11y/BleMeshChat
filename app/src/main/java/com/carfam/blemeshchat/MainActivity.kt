@@ -18,8 +18,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.google.firebase.firestore.ktx.firestore
-import com.google.firebase.ktx.Firebase
+import com.google.firebase.Firebase
+import com.google.firebase.firestore.firestore
 import com.google.firebase.messaging.FirebaseMessaging
 import java.text.SimpleDateFormat
 import java.util.*
