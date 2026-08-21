@@ -18,8 +18,8 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.localbroadcastmanager.content.LocalBroadcastManager
-import com.google.firebase.Firebase
-import com.google.firebase.firestore.firestore
+import com.google.firebase.firestore.ktx.firestore
+import com.google.firebase.ktx.Firebase
 import com.google.firebase.messaging.FirebaseMessaging
 import java.text.SimpleDateFormat
 import java.util.*
@@ -153,14 +153,26 @@ class MainActivity : AppCompatActivity() {
                 val active = snapshot.getBoolean("active") ?: false
                 val description = snapshot.getString("description") ?: ""
                 val link = snapshot.getString("link") ?: ""
+                val latestVersionCode = (snapshot.getLong("latestVersionCode") ?: 0L).toInt()
 
-                if (active) {
+                val alreadyUpToDate = getCurrentVersionCode() >= latestVersionCode
+
+                if (active && !alreadyUpToDate) {
                     showAnnouncementDialog(description, link)
                 } else {
                     announcementDialog?.dismiss()
                     announcementDialog = null
                 }
             }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun getCurrentVersionCode(): Int {
+        return try {
+            packageManager.getPackageInfo(packageName, 0).versionCode
+        } catch (e: Exception) {
+            0
+        }
     }
 
     private fun showAnnouncementDialog(description: String, link: String) {
